@@ -50,10 +50,10 @@ async function main() {
   const Erc20Token = await ethers.getContractFactory("ERC20Token");
 
   const SupportClub = await ethers.getContractFactory("SupportClub");
-  const supportClub = await SupportClub.deploy(true);
+  const supportClub = await SupportClub.deploy(false);
 
   const additionalsUsers = await Promise.all(
-    new Array(10).fill(null).map(async () => {
+    new Array(20).fill(null).map(async () => {
       const randomUser = createRandom();
       await owner.sendTransaction({
         value: parseUnits("1", 18),
@@ -134,7 +134,7 @@ async function main() {
     gasAnalytics[`initClub`].push(addGasData(rec));
 
     let lastTokenIndex = 0;
-    for (let uIndex = 0; uIndex < 5; uIndex++) {
+    for (let uIndex = 0; uIndex < users.length; uIndex++) {
       const user = users[uIndex];
 
       const [tokenIndex, newLastIndex] = getOutOfBoundIndex(
@@ -173,8 +173,6 @@ async function main() {
     `clubSubscribers`,
     clubSubscribers.map((a) => a.length)
   );
-
-  console.log(gasAnalytics);
 
   const renewKey = `renew${clubOwnersAddresses.length}Clubs${allSubs}Subs`;
   gasAnalytics[renewKey] = [];

@@ -158,10 +158,6 @@ contract SupportClub is Ownable, NextDate {
         emit Subscribed(clubOwner, msg.sender);
     }
 
-    function withdrawErc20(address erc20Token, uint256 amount) external {
-        IERC20(erc20Token).transfer(owner(), amount);
-    }
-
     function addPaymentTokens(
         PaymentToken[] calldata erc20Tokens
     ) external payable onlyOwner {
@@ -198,10 +194,9 @@ contract SupportClub is Ownable, NextDate {
     function getActualRound() public returns (RenewRound memory) {
         RenewRound memory renewRound_ = renewRound;
         if (renewRound_.startsAt < block.timestamp) {
-            // create new round
             uint32 nextRoundStartsAt = uint32(
                 getStartOfNextMonth(block.timestamp)
-            );
+            ); // create new round
 
             renewRound_.id += renewRound_.startsAt != 0
                 ? uint8((nextRoundStartsAt - renewRound_.startsAt) / 28 days)
@@ -222,9 +217,7 @@ contract SupportClub is Ownable, NextDate {
         address user = msg.sender;
 
         Subscription memory subscription = subscriptionTo[clubOwner][user];
-        if (subscription.amount == 0) {
-            revert NotSubscribed();
-        }
+        if (subscription.amount == 0) revert NotSubscribed();
 
         if (storeExtraData) {
             if (
@@ -263,7 +256,6 @@ contract SupportClub is Ownable, NextDate {
         if (clubs[clubOwner].isSupportReciever) {
             ISupportReciever(clubOwner).onUnsubscribed(user);
         }
-
         emit SubscriptionBurned(clubOwner, user);
     }
 
@@ -280,10 +272,15 @@ contract SupportClub is Ownable, NextDate {
 
             bool isSupportReciever = clubs[clubOwner].isSupportReciever;
             for (uint256 index; index < clubSubscribers.length; ++index) {
+                Subscription memory subscription = subscriptionTo[clubOwner][
+                    clubSubscribers[index]
+                ];
                 _renewSubscription(
+                    subscription,
                     clubOwner,
                     clubSubscribers[index],
-                    renewRoundId
+                    renewRoundId,
+                    false
                 );
                 if (isSupportReciever)
                     ISupportReciever(clubOwner).onRenewed(
@@ -320,12 +317,12 @@ contract SupportClub is Ownable, NextDate {
                     clubSubscribers[index]
                 ];
                 if (subscription.tokenIndex != tokenIndex) revert Forbidden();
-                amountForClub += _renewSubscriptionWRefund(
+                amountForClub += _renewSubscription(
                     subscription,
                     clubOwner,
                     clubSubscribers[index],
                     renewRoundId,
-                    tokenAddress
+                    true
                 );
 
                 if (isSupportReciever)
@@ -349,36 +346,11 @@ contract SupportClub is Ownable, NextDate {
     }
 
     function _renewSubscription(
-        address clubOwner,
-        address subscriber,
-        uint8 renewRoundId
-    ) internal {
-        Subscription memory subscription = subscriptionTo[clubOwner][
-            subscriber
-        ];
-
-        uint8 lastRenewRound = subscription.lastRenewRound;
-        if (lastRenewRound == 0)
-            lastRenewRound = subscription.subscriptionRound;
-        if (lastRenewRound == renewRoundId) revert SubscriptionNotExpired();
-
-        subscriptionTo[clubOwner][subscriber].lastRenewRound = renewRoundId;
-
-        uint16 tokenIndex = subscription.tokenIndex;
-        IERC20(paymentTokens[tokenIndex].address_).safeTransferFrom(
-            subscriber,
-            clubOwner,
-            (subscription.amount * (renewRoundId - lastRenewRound)) *
-                (10 ** subscription.amountDecimals) // (amount * non-renewed periods) * decimals
-        );
-    }
-
-    function _renewSubscriptionWRefund(
         Subscription memory subscription,
         address clubOwner,
         address subscriber,
         uint8 renewRoundId,
-        address erc20Address
+        bool withRefund
     ) internal returns (uint256) {
         uint8 lastRenewRound = subscription.lastRenewRound;
         if (lastRenewRound == 0)
@@ -387,12 +359,13 @@ contract SupportClub is Ownable, NextDate {
 
         subscriptionTo[clubOwner][subscriber].lastRenewRound = renewRoundId;
 
+        uint16 tokenIndex = subscription.tokenIndex;
         uint256 fullAmount = (subscription.amount *
             (renewRoundId - lastRenewRound)) *
             (10 ** subscription.amountDecimals); // (amount * non-renewed periods) * decimals
-        IERC20(erc20Address).safeTransferFrom(
+        IERC20(paymentTokens[tokenIndex].address_).safeTransferFrom(
             subscriber,
-            address(this),
+            withRefund ? address(this) : clubOwner,
             fullAmount
         );
 
@@ -410,6 +383,4 @@ contract SupportClub is Ownable, NextDate {
         }
         clubOwners.push(clubOwner);
     }
-
-    receive() external payable {}
 }
