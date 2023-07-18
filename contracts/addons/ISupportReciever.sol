@@ -5,7 +5,7 @@ interface ISupportReciever {
     function onSubscribed(
         address user,
         address token,
-        uint256 fullAmount
+        uint256 currentAmount
     ) external payable;
 
     function onRenewed(address user) external payable;

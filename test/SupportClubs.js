@@ -13,7 +13,7 @@ const DECIMALS = 18;
 const DENOMINATOR = 10_000;
 
 const MAX_ALLOWANCE_IN_MONTHS = 12;
-const USER_INIT_BALANCE = SUBSCRIPTION_PRICE * MAX_ALLOWANCE_IN_MONTHS;
+const USER_INIT_BALANCE = SUBSCRIPTION_PRICE * MAX_ALLOWANCE_IN_MONTHS * 1000;
 const userInitBalanceWei = parseUnits(`${USER_INIT_BALANCE}`, DECIMALS);
 
 describe("SupportClub", function () {
@@ -165,9 +165,10 @@ describe("SupportClub", function () {
           );
           lastTokenIndex = newLastIndex;
 
-          const [tokenAddress, price, decimals] = paymentTokens[tokenIndex];
+          const [tokenAddress, minAmount, decimals] = paymentTokens[tokenIndex];
 
-          const subscriptionPriceWei = parseUnits(`${price}`, decimals);
+          const subAmount = minAmount * 2;
+          const subscriptionPriceWei = parseUnits(`${subAmount}`, decimals);
 
           if (!clubTokenAmounts[cIndex][tokenAddress]) {
             clubTokenAmounts[cIndex][tokenAddress] = {
@@ -183,25 +184,29 @@ describe("SupportClub", function () {
 
           clubTokenAmounts[cIndex][tokenAddress].users.push(user.address);
 
-          const totalPayAmount =
-            daysTillNextMonth < 30
-              ? subscriptionPriceWei.div(30).mul(daysTillNextMonth)
-              : subscriptionPriceWei;
+          const payAmount = parseUnits(`${minAmount}`, decimals).add(1);
+
           await expect(
             supportClub
               .connect(user)
-              .subscribe(clubOwner.address, tokenIndex, price, decimals)
+              .subscribe(
+                clubOwner.address,
+                tokenIndex,
+                subAmount,
+                decimals,
+                payAmount
+              )
           ).to.changeTokenBalances(
             erc20Tokens[tokenIndex],
             [clubOwner, user],
-            [totalPayAmount, totalPayAmount.mul(-1)]
+            [payAmount, payAmount.mul(-1)]
           );
 
           clubOwnersSubscribers[cIndex].push(user.address);
 
           const subscription = {
             id: uIndex + 1,
-            amount: price,
+            amount: subAmount,
             amountDecimals: decimals,
             tokenIndex,
             lastRenewRound: 0,
@@ -290,11 +295,11 @@ describe("SupportClub", function () {
 
         for (let index = 0; index < erc20Tokens.length; index++) {
           const erc20Token = erc20Tokens[index];
-          const [, price, decimals] = paymentTokens[index];
+          const [, minAmount, decimals] = paymentTokens[index];
 
           const fee = 1500;
           const refundFeePerSub = parseUnits(
-            `${(price * fee) / DENOMINATOR}`,
+            `${(minAmount * 2 * fee) / DENOMINATOR}`,
             decimals
           );
           const clubTokenSubscribers = clubOwners.map(

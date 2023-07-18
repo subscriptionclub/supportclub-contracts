@@ -96,7 +96,8 @@ contract SupportClub is Ownable, NextDate {
         address clubOwner,
         uint16 tokenIndex,
         uint32 amount,
-        uint8 amountDecimals
+        uint8 amountDecimals,
+        uint256 currentAmount
     ) external payable {
         if (
             subscriptionTo[clubOwner][msg.sender].amount != 0 ||
@@ -126,32 +127,29 @@ contract SupportClub is Ownable, NextDate {
             });
         }
 
-        uint256 totalAmount = amount * (10 ** amountDecimals);
-
         PaymentToken memory paymentToken = paymentTokens[tokenIndex];
-        if (
-            totalAmount <
-            paymentToken.minAmount * (10 ** paymentToken.minAmountDecimals)
-        ) revert InvalidParams();
 
-        uint32 nextMonthStart = _renewRound.startsAt;
-        uint256 daysTillRenew = nextMonthStart - block.timestamp > 1 days
-            ? (nextMonthStart - block.timestamp) / 1 days
-            : 1;
-        if (daysTillRenew < 30)
-            totalAmount = (totalAmount / 30) * daysTillRenew;
+        uint256 totalAmount = amount * (10 ** amountDecimals);
+        uint256 minAmount = paymentToken.minAmount *
+            (10 ** paymentToken.minAmountDecimals);
+
+        if (
+            totalAmount < minAmount ||
+            currentAmount < minAmount ||
+            currentAmount > totalAmount
+        ) revert InvalidParams();
 
         IERC20(paymentToken.address_).safeTransferFrom(
             msg.sender,
             clubOwner,
-            totalAmount
+            currentAmount
         );
 
         if (clubs[clubOwner].isSupportReciever) {
             ISupportReciever(clubOwner).onSubscribed{value: msg.value}(
                 msg.sender,
                 paymentToken.address_,
-                amount * (10 ** amountDecimals)
+                currentAmount
             );
         }
 

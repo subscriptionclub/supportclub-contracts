@@ -53,7 +53,7 @@ async function main() {
   const supportClub = await SupportClub.deploy(false);
 
   const additionalsUsers = await Promise.all(
-    new Array(20).fill(null).map(async () => {
+    new Array(5).fill(null).map(async () => {
       const randomUser = createRandom();
       await owner.sendTransaction({
         value: parseUnits("1", 18),
@@ -148,7 +148,13 @@ async function main() {
       await supportClub.getActualRound();
       await supportClub
         .connect(user)
-        .subscribe(clubOwner.address, tokenIndex, price, decimals)
+        .subscribe(
+          clubOwner.address,
+          tokenIndex,
+          price,
+          decimals,
+          parseUnits(`${price}`, decimals)
+        )
         .then((tx) => tx.wait())
         .then((rec) =>
           uIndex < 2 && cIndex < 5
