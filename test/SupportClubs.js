@@ -1,10 +1,11 @@
+// require("@nomicfoundation/hardhat-toolbox");
 const { ethers } = require(`hardhat`);
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 const { expect } = require("chai");
 const { parseUnits, formatEther } = require("ethers/lib/utils");
 const { jsParseDate, struct } = require(`./utils`);
 const { getOutOfBoundIndex } = require("../utils");
-const { AddressZero, Zero } = ethers.constants;
+const { Zero } = ethers.constants;
 
 const { createRandom } = ethers.Wallet;
 
@@ -17,13 +18,13 @@ const USER_INIT_BALANCE = SUBSCRIPTION_PRICE * MAX_ALLOWANCE_IN_MONTHS * 1000;
 const userInitBalanceWei = parseUnits(`${USER_INIT_BALANCE}`, DECIMALS);
 
 describe("SupportClub", function () {
-  async function deployFixture() {
+  async function deployFixture(storeExtraData) {
     const [owner, ...allClubOwners] = await ethers.getSigners();
 
     const Erc20Token = await ethers.getContractFactory("ERC20Token");
 
     const SupportClub = await ethers.getContractFactory("SupportClub");
-    const supportClub = await SupportClub.deploy(true);
+    const supportClub = await SupportClub.deploy(storeExtraData);
 
     const ClubQuery = await ethers.getContractFactory("ClubQuery");
     const clubQuery = await ClubQuery.deploy(supportClub.address);
@@ -47,7 +48,7 @@ describe("SupportClub", function () {
     const paymentTokens = [];
     const erc20Tokens = [];
 
-    const clubOwners = allClubOwners.slice(0, 2);
+    const clubOwners = allClubOwners.slice(0, 3);
 
     for (let index = 0; index < users.length; index++) {
       const erc20 = await Erc20Token.deploy();
@@ -104,8 +105,8 @@ describe("SupportClub", function () {
     });
   });
 
-  describe(`subscribe & renew`, function () {
-    async function createAndCheckSubscriptions() {
+  describe(`subscribe & renew & burn`, function () {
+    async function createAndCheckSubscriptions(storeExtraData = true) {
       const {
         supportClub,
         clubQuery,
@@ -114,7 +115,7 @@ describe("SupportClub", function () {
         erc20Tokens,
         paymentTokens,
         owner,
-      } = await deployFixture();
+      } = await deployFixture(storeExtraData);
 
       const date = await currentDate();
       const monthIndex = date.getUTCMonth();
@@ -127,12 +128,6 @@ describe("SupportClub", function () {
       const initRenewRound = await supportClub.renewRound();
       expect(initRenewRound.id).to.deep.eq(1);
       expect(initRenewRound.startsAt).to.eq(jsExpiration);
-
-      const { startsAt } = initRenewRound;
-      const daysTillNextMonth =
-        startsAt - (await time.latest()) > 86_400
-          ? Math.floor((startsAt - (await time.latest())) / 86_400)
-          : 1;
 
       const clubOwnersSubscribers = [];
       const clubTokenAmounts = [];
@@ -345,6 +340,48 @@ describe("SupportClub", function () {
           startsAt: newNextDateTimestamp,
           id: prevRenewRound.id + 1,
         });
+      }
+
+      for (let uIndex = 0; uIndex < users.length; uIndex++) {
+        const user = users[uIndex];
+
+        const [_userClubOwners, userSubs] =
+          await clubQuery.getUserSubscriptionsFulfilled(user.address);
+        const userClubOwners = [..._userClubOwners];
+
+        const userSubscriptionsCount = await supportClub.userSubscriptionsCount(
+          user.address
+        );
+        expect(userSubscriptionsCount).to.eq(userClubOwners.length);
+
+        for (
+          let userSubscriptionIndex = 0;
+          userSubscriptionIndex < userClubOwners.length;
+
+        ) {
+          const userClubOwner = userClubOwners[userSubscriptionIndex];
+          const userSub = userSubs[userSubscriptionIndex];
+
+          const subscriptionTo = await supportClub.subscriptionTo(
+            userClubOwner,
+            user.address
+          );
+          expect(subscriptionTo).to.deep.eq(userSub);
+
+          const subIndex = 0;
+          const tx = await supportClub
+            .connect(user)
+            .burnSubscription(user.address, userClubOwner, subIndex);
+          await tx.wait();
+
+          const lastIndex = userClubOwners.length - 1;
+          userClubOwners[subIndex] = userClubOwners[lastIndex];
+          userClubOwners.pop();
+
+          const newSubscriptionsCount =
+            await supportClub.userSubscriptionsCount(user.address);
+          expect(newSubscriptionsCount).to.eq(userClubOwners.length);
+        }
       }
     }
 

@@ -88,8 +88,20 @@ contract SupportClub is Ownable, NextDate {
     }
 
     function initClub(address clubOwner) external {
-        require(clubs[clubOwner].id == 0, "Already initialized");
+        require(
+            clubs[clubOwner].nextSubscriptionId == 0,
+            "Already initialized"
+        );
         _initClub(clubOwner);
+    }
+
+    function setIsSupportReciever(address clubOwner) external {
+        if (clubOwner.code.length > 0) {
+            clubs[clubOwner].isSupportReciever = clubOwner
+                .supportsERC165InterfaceUnchecked(
+                    type(ISupportReciever).interfaceId
+                );
+        }
     }
 
     function subscribe(
@@ -105,27 +117,26 @@ contract SupportClub is Ownable, NextDate {
         ) revert Forbidden();
 
         RenewRound memory _renewRound = getActualRound();
-        unchecked {
-            if (clubs[clubOwner].nextSubscriptionId == 0) {
-                _initClub(clubOwner);
-            }
 
-            uint128 subId;
-            if (storeExtraData) {
-                subId = clubs[clubOwner].nextSubscriptionId++;
-
-                subscriberOf[clubOwner][subId] = msg.sender;
-                userSubscriptions[msg.sender].push(clubs[clubOwner].id);
-            }
-            subscriptionTo[clubOwner][msg.sender] = Subscription({
-                id: subId,
-                amount: amount,
-                amountDecimals: amountDecimals,
-                tokenIndex: tokenIndex,
-                lastRenewRound: 0,
-                subscriptionRound: _renewRound.id
-            });
+        if (clubs[clubOwner].nextSubscriptionId == 0) {
+            _initClub(clubOwner);
         }
+
+        uint128 subId;
+        if (storeExtraData) {
+            subId = clubs[clubOwner].nextSubscriptionId++;
+
+            subscriberOf[clubOwner][subId] = msg.sender;
+            userSubscriptions[msg.sender].push(clubs[clubOwner].id);
+        }
+        subscriptionTo[clubOwner][msg.sender] = Subscription({
+            id: subId,
+            amount: amount,
+            amountDecimals: amountDecimals,
+            tokenIndex: tokenIndex,
+            lastRenewRound: 0,
+            subscriptionRound: _renewRound.id
+        });
 
         PaymentToken memory paymentToken = paymentTokens[tokenIndex];
 
@@ -209,10 +220,11 @@ contract SupportClub is Ownable, NextDate {
     }
 
     function burnSubscription(
+        address user,
         address clubOwner,
         uint256 userSubscriptionIndex
     ) external {
-        address user = msg.sender;
+        if (msg.sender != user && msg.sender != owner()) revert Forbidden();
 
         Subscription memory subscription = subscriptionTo[clubOwner][user];
         if (subscription.amount == 0) revert NotSubscribed();
@@ -242,9 +254,11 @@ contract SupportClub is Ownable, NextDate {
 
             uint256 lastUserSubscriptionIndex = userSubscriptions[user].length -
                 1;
-            userSubscriptions[user][userSubscriptionIndex] = userSubscriptions[
-                user
-            ][lastUserSubscriptionIndex];
+            if (userSubscriptionIndex != lastUserSubscriptionIndex) {
+                userSubscriptions[user][
+                    userSubscriptionIndex
+                ] = userSubscriptions[user][lastUserSubscriptionIndex];
+            }
             userSubscriptions[user].pop();
 
             clubs[clubOwner].nextSubscriptionId--;
@@ -372,13 +386,15 @@ contract SupportClub is Ownable, NextDate {
 
     function _initClub(address clubOwner) internal {
         ++clubs[clubOwner].nextSubscriptionId;
-        clubs[clubOwner].id = uint96(clubOwners.length);
         if (clubOwner.code.length > 0) {
             clubs[clubOwner].isSupportReciever = clubOwner
                 .supportsERC165InterfaceUnchecked(
                     type(ISupportReciever).interfaceId
                 );
         }
-        clubOwners.push(clubOwner);
+        if (storeExtraData) {
+            clubs[clubOwner].id = uint96(clubOwners.length);
+            clubOwners.push(clubOwner);
+        }
     }
 }
