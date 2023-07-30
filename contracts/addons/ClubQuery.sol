@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface ISupportClub {
     struct Subscription {
-        uint128 id;
+        uint128 idx;
         uint32 amount;
         uint8 amountDecimals;
         uint16 tokenIndex;
@@ -51,7 +51,7 @@ interface ISupportClub {
 
     function subscriptionsCount(
         address clubOwner
-    ) external view returns (uint256);
+    ) external view returns (uint128);
 }
 
 contract ClubQuery {
@@ -68,8 +68,8 @@ contract ClubQuery {
 
     function getSubscribers(
         address clubOwner,
-        uint256 from,
-        uint256 to,
+        uint128 from,
+        uint128 to,
         bool checkRenewState
     )
         external
@@ -77,7 +77,7 @@ contract ClubQuery {
         returns (Subscriber[] memory, ISupportClub.Subscription[] memory)
     {
         {
-            uint256 subscriptionsCount = _club.subscriptionsCount(clubOwner);
+            uint128 subscriptionsCount = _club.subscriptionsCount(clubOwner);
             if (to == 0) to = subscriptionsCount;
             require(
                 from > 0 && to >= from && to <= subscriptionsCount,
@@ -94,8 +94,8 @@ contract ClubQuery {
             memory subscriptions_ = new ISupportClub.Subscription[](limit);
 
         uint256 index;
-        for (uint256 id = from; id <= to; id++) {
-            address user = _club.subscriberOf(clubOwner, uint128(id));
+        for (uint128 subIdx = from; subIdx <= to; subIdx++) {
+            address user = _club.subscriberOf(clubOwner, subIdx);
             ISupportClub.Subscription memory sub = _club.subscriptionTo(
                 clubOwner,
                 user
@@ -158,8 +158,8 @@ contract ClubQuery {
             memory subscriptions_ = new ISupportClub.Subscription[](limit);
 
         uint256 index;
-        for (uint128 id = from; id <= to; id++) {
-            address user = _club.subscriberOf(clubOwner, id);
+        for (uint128 subIdx = from; subIdx <= to; subIdx++) {
+            address user = _club.subscriberOf(clubOwner, subIdx);
             ISupportClub.Subscription memory sub = _club.subscriptionTo(
                 clubOwner,
                 user

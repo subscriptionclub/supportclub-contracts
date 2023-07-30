@@ -8,12 +8,20 @@ import "./erc20/SafeERC20.sol";
 
 import "./addons/ISupportReciever.sol";
 
+/**
+ * @title SupportClub
+ * @dev This contract allows to sign up for monthly payments in ERC20 tokens to any address. User can subscribe in any token from `paymentTokens` array, in any amount, but not less than the minimum value `minAmount * 10**minAmountDecimals`. On the first day of each month, the sums donated to recipient (=club owner) via subscriptions become eligible for collection and renewal by {renewClubsSubscriptions} & {renewClubsSubscriptionsWRefund} methods.
+ */
 contract SupportClub is Ownable, NextDate {
     using ERC165Checker for address;
     using SafeERC20 for IERC20;
 
+    /**
+     * @dev `amount` & `amountDecimals` are used to reduce Subscription struct storage size,
+     * total subscription amount = `amount * (10**amountDecimals)`
+     */
     struct Subscription {
-        uint128 id;
+        uint128 idx;
         uint32 amount;
         uint8 amountDecimals;
         uint16 tokenIndex;
@@ -29,18 +37,31 @@ contract SupportClub is Ownable, NextDate {
         uint16 minAmount;
         uint8 minAmountDecimals;
     }
+
+    /**
+    * @dev
+     `refundForbidden` – a clubOwner can disable the renewal of club subscriptions with {renewClubsSubscriptionsWRefund} method
+     `isSupportReciever` – whether the clubOwner is a SupportReciever-compatible contract
+     */
     struct ClubData {
-        uint128 nextSubscriptionId;
+        uint128 nextSubscriptionIdx;
         uint96 id;
         bool refundForbidden;
         bool isSupportReciever;
     }
 
+    /**
+     * @dev clubOwner => (user => Subscription)
+     */
     mapping(address => mapping(address => Subscription)) public subscriptionTo;
+    /**
+     * @dev clubOwner => (subscriberIndex => user)
+     */
     mapping(address => mapping(uint128 => address)) public subscriberOf;
+    /**
+     * @dev user: clubId[]
+     */
     mapping(address => uint128[]) public userSubscriptions;
-
-    mapping(address => bool) public refundForbidden;
 
     PaymentToken[10_000] public paymentTokens;
     uint256 public totalPaymentTokens;
@@ -48,7 +69,11 @@ contract SupportClub is Ownable, NextDate {
     address[] public clubOwners;
     mapping(address => ClubData) public clubs;
 
-    uint256 constant MAX_REFUND_FEE = 1500;
+    uint256 constant MAX_REFUND_FEE = 1500; // 15%
+    /**
+     * @dev if `true` {subscribe} method will store extra data about subsciption for easy data querying;
+     * `true` for all chains except Ethereum mainnet since its high gas cost for using extra storage
+     */
     bool public immutable storeExtraData;
 
     error SubscriptionNotExpired();
@@ -61,6 +86,8 @@ contract SupportClub is Ownable, NextDate {
         uint256 indexed subscriptionsCount
     );
     event SubscriptionBurned(address indexed clubOwner, address indexed user);
+    event SetIsSupportReciever(address clubOwner);
+    event SetRefundForbidden(bool refundForbidden);
 
     constructor(bool _storeExtraData) {
         storeExtraData = _storeExtraData;
@@ -80,28 +107,11 @@ contract SupportClub is Ownable, NextDate {
 
     function subscriptionsCount(
         address clubOwner
-    ) external view returns (uint256) {
-        uint256 nextId = clubs[clubOwner].nextSubscriptionId;
+    ) external view returns (uint128) {
+        uint128 nextId = clubs[clubOwner].nextSubscriptionIdx;
 
         if (nextId == 0) return 0;
         return nextId - 1;
-    }
-
-    function initClub(address clubOwner) external {
-        require(
-            clubs[clubOwner].nextSubscriptionId == 0,
-            "Already initialized"
-        );
-        _initClub(clubOwner);
-    }
-
-    function setIsSupportReciever(address clubOwner) external {
-        if (clubOwner.code.length > 0) {
-            clubs[clubOwner].isSupportReciever = clubOwner
-                .supportsERC165InterfaceUnchecked(
-                    type(ISupportReciever).interfaceId
-                );
-        }
     }
 
     function subscribe(
@@ -118,19 +128,17 @@ contract SupportClub is Ownable, NextDate {
 
         RenewRound memory _renewRound = getActualRound();
 
-        if (clubs[clubOwner].nextSubscriptionId == 0) {
-            _initClub(clubOwner);
-        }
+        if (clubs[clubOwner].nextSubscriptionIdx == 0) _initClub(clubOwner);
 
-        uint128 subId;
+        uint128 subIdx;
         if (storeExtraData) {
-            subId = clubs[clubOwner].nextSubscriptionId++;
+            subIdx = clubs[clubOwner].nextSubscriptionIdx++;
 
-            subscriberOf[clubOwner][subId] = msg.sender;
+            subscriberOf[clubOwner][subIdx] = msg.sender;
             userSubscriptions[msg.sender].push(clubs[clubOwner].id);
         }
         subscriptionTo[clubOwner][msg.sender] = Subscription({
-            id: subId,
+            idx: subIdx,
             amount: amount,
             amountDecimals: amountDecimals,
             tokenIndex: tokenIndex,
@@ -163,8 +171,32 @@ contract SupportClub is Ownable, NextDate {
                 currentAmount
             );
         }
-
         emit Subscribed(clubOwner, msg.sender);
+    }
+
+    function initClub(address clubOwner) external {
+        require(
+            clubs[clubOwner].nextSubscriptionIdx == 0,
+            "Already initialized"
+        );
+        _initClub(clubOwner);
+    }
+
+    function setIsSupportReciever(address clubOwner) external {
+        if (clubOwner.code.length > 0) {
+            clubs[clubOwner].isSupportReciever = clubOwner
+                .supportsERC165InterfaceUnchecked(
+                    type(ISupportReciever).interfaceId
+                );
+
+            emit SetIsSupportReciever(clubOwner);
+        }
+    }
+
+    function setRefundForbidden(bool refundForbidden) external {
+        clubs[msg.sender].refundForbidden = refundForbidden;
+
+        emit SetRefundForbidden(refundForbidden);
     }
 
     function addPaymentTokens(
@@ -213,7 +245,6 @@ contract SupportClub is Ownable, NextDate {
             renewRound_.startsAt = nextRoundStartsAt;
 
             renewRound = renewRound_;
-
             return renewRound_;
         }
         return renewRound_;
@@ -235,22 +266,21 @@ contract SupportClub is Ownable, NextDate {
                 clubs[clubOwner].id
             ) revert InvalidParams();
 
-            uint128 subscriptionId_ = subscription.id;
+            uint128 subscriberIdx = subscription.idx;
 
-            uint128 lastSubscriptionId = clubs[clubOwner].nextSubscriptionId -
-                1;
-            if (subscriptionId_ != lastSubscriptionId) {
+            uint128 lastSubIdx = clubs[clubOwner].nextSubscriptionIdx - 1;
+            if (subscriberIdx != lastSubIdx) {
                 address lastSubscriptionUser = subscriberOf[clubOwner][
-                    lastSubscriptionId
+                    lastSubIdx
                 ];
 
                 subscriptionTo[clubOwner][lastSubscriptionUser]
-                    .id = subscriptionId_;
+                    .idx = subscriberIdx;
 
-                subscriberOf[clubOwner][subscriptionId_] = lastSubscriptionUser;
+                subscriberOf[clubOwner][subscriberIdx] = lastSubscriptionUser;
             }
 
-            delete subscriberOf[clubOwner][lastSubscriptionId];
+            delete subscriberOf[clubOwner][lastSubIdx];
 
             uint256 lastUserSubscriptionIndex = userSubscriptions[user].length -
                 1;
@@ -261,12 +291,20 @@ contract SupportClub is Ownable, NextDate {
             }
             userSubscriptions[user].pop();
 
-            clubs[clubOwner].nextSubscriptionId--;
+            clubs[clubOwner].nextSubscriptionIdx--;
         }
         delete subscriptionTo[clubOwner][user];
 
         if (clubs[clubOwner].isSupportReciever) {
-            ISupportReciever(clubOwner).onUnsubscribed(user);
+            /**
+             * @dev ignore {SupportReciever.onUnsubscribed} method failing
+             */
+            clubOwner.call(
+                abi.encodeWithSelector(
+                    ISupportReciever.onUnsubscribed.selector,
+                    user
+                )
+            );
         }
         emit SubscriptionBurned(clubOwner, user);
     }
@@ -284,15 +322,10 @@ contract SupportClub is Ownable, NextDate {
 
             bool isSupportReciever = clubs[clubOwner].isSupportReciever;
             for (uint256 index; index < clubSubscribers.length; ++index) {
-                Subscription memory subscription = subscriptionTo[clubOwner][
-                    clubSubscribers[index]
-                ];
                 _renewSubscription(
-                    subscription,
                     clubOwner,
                     clubSubscribers[index],
-                    renewRoundId,
-                    false
+                    renewRoundId
                 );
                 if (isSupportReciever)
                     ISupportReciever(clubOwner).onRenewed(
@@ -318,7 +351,7 @@ contract SupportClub is Ownable, NextDate {
         address tokenAddress = paymentTokens[tokenIndex].address_;
         for (uint i = 0; i < _clubOwners.length; i++) {
             address clubOwner = _clubOwners[i];
-            if (refundForbidden[clubOwner]) revert Forbidden();
+            if (clubs[clubOwner].refundForbidden) revert Forbidden();
 
             bool isSupportReciever = clubs[clubOwner].isSupportReciever;
             address[] calldata clubSubscribers = _subscribers[i];
@@ -328,13 +361,15 @@ contract SupportClub is Ownable, NextDate {
                 Subscription memory subscription = subscriptionTo[clubOwner][
                     clubSubscribers[index]
                 ];
-                if (subscription.tokenIndex != tokenIndex) revert Forbidden();
-                amountForClub += _renewSubscription(
+                if (subscription.tokenIndex != tokenIndex)
+                    revert InvalidParams();
+
+                amountForClub += _renewSubscriptionWRefund(
                     subscription,
                     clubOwner,
                     clubSubscribers[index],
-                    renewRoundId,
-                    true
+                    tokenAddress,
+                    renewRoundId
                 );
 
                 if (isSupportReciever)
@@ -358,12 +393,15 @@ contract SupportClub is Ownable, NextDate {
     }
 
     function _renewSubscription(
-        Subscription memory subscription,
         address clubOwner,
         address subscriber,
-        uint8 renewRoundId,
-        bool withRefund
-    ) internal returns (uint256) {
+        uint8 renewRoundId
+    ) internal {
+        Subscription memory subscription = subscriptionTo[clubOwner][
+            subscriber
+        ];
+        if (subscription.amount == 0) revert InvalidParams();
+
         uint8 lastRenewRound = subscription.lastRenewRound;
         if (lastRenewRound == 0)
             lastRenewRound = subscription.subscriptionRound;
@@ -372,20 +410,41 @@ contract SupportClub is Ownable, NextDate {
         subscriptionTo[clubOwner][subscriber].lastRenewRound = renewRoundId;
 
         uint16 tokenIndex = subscription.tokenIndex;
+
+        IERC20(paymentTokens[tokenIndex].address_).safeTransferFrom(
+            subscriber,
+            clubOwner,
+            (subscription.amount * (renewRoundId - lastRenewRound)) *
+                (10 ** subscription.amountDecimals) // (amount * non-renewed periods) * decimals
+        );
+    }
+
+    function _renewSubscriptionWRefund(
+        Subscription memory subscription,
+        address clubOwner,
+        address subscriber,
+        address token,
+        uint8 renewRoundId
+    ) internal returns (uint256) {
+        if (subscription.amount == 0) revert InvalidParams();
+
+        uint8 lastRenewRound = subscription.lastRenewRound;
+        if (lastRenewRound == 0)
+            lastRenewRound = subscription.subscriptionRound;
+        if (lastRenewRound == renewRoundId) revert SubscriptionNotExpired();
+
+        subscriptionTo[clubOwner][subscriber].lastRenewRound = renewRoundId;
+
         uint256 fullAmount = (subscription.amount *
             (renewRoundId - lastRenewRound)) *
             (10 ** subscription.amountDecimals); // (amount * non-renewed periods) * decimals
-        IERC20(paymentTokens[tokenIndex].address_).safeTransferFrom(
-            subscriber,
-            withRefund ? address(this) : clubOwner,
-            fullAmount
-        );
+        IERC20(token).safeTransferFrom(subscriber, address(this), fullAmount);
 
         return fullAmount;
     }
 
     function _initClub(address clubOwner) internal {
-        ++clubs[clubOwner].nextSubscriptionId;
+        ++clubs[clubOwner].nextSubscriptionIdx;
         if (clubOwner.code.length > 0) {
             clubs[clubOwner].isSupportReciever = clubOwner
                 .supportsERC165InterfaceUnchecked(

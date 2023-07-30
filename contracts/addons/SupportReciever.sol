@@ -4,8 +4,8 @@ pragma solidity ^0.8.18;
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import "./ISupportReciever.sol";
 
-contract SupportReciever is ERC165 {
-    mapping(address => bool) public whitelist;
+contract SupportReciever is ERC165, ISupportReciever {
+    mapping(address => uint256) public points;
     address public paymentToken;
 
     constructor(address _paymentToken) {
@@ -24,7 +24,15 @@ contract SupportReciever is ERC165 {
         uint256 amount
     ) external payable {
         if (token == paymentToken && amount >= 1 ether) {
-            whitelist[user] = true;
+            ++points[user];
         }
+    }
+
+    function onRenewed(address user) external payable {
+        ++points[user];
+    }
+
+    function onUnsubscribed(address user) external payable {
+        points[user] = 0;
     }
 }

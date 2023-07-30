@@ -2,7 +2,7 @@
 const { ethers } = require(`hardhat`);
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 const { expect } = require("chai");
-const { parseUnits, formatEther } = require("ethers/lib/utils");
+const { parseUnits, formatEther, parseEther } = require("ethers/lib/utils");
 const { jsParseDate, struct } = require(`./utils`);
 const { getOutOfBoundIndex } = require("../utils");
 const { Zero } = ethers.constants;
@@ -48,7 +48,7 @@ describe("SupportClub", function () {
     const paymentTokens = [];
     const erc20Tokens = [];
 
-    const clubOwners = allClubOwners.slice(0, 3);
+    const clubOwners = allClubOwners.slice(0, 4);
 
     for (let index = 0; index < users.length; index++) {
       const erc20 = await Erc20Token.deploy();
@@ -73,6 +73,13 @@ describe("SupportClub", function () {
       }
     }
 
+    const SupportReciever = await ethers.getContractFactory(`SupportReciever`);
+    const supportReciever = await SupportReciever.deploy(
+      erc20Tokens[0].address
+    );
+
+    clubOwners.unshift(supportReciever);
+
     await supportClub.addPaymentTokens(paymentTokens).then((tx) => tx.wait());
 
     return {
@@ -84,6 +91,7 @@ describe("SupportClub", function () {
       erc20Tokens,
       parsedDate: jsParseDate(await currentDate(), 1),
       owner,
+      supportReciever,
     };
   }
 
@@ -197,10 +205,15 @@ describe("SupportClub", function () {
             [payAmount, payAmount.mul(-1)]
           );
 
+          // SupportReciever
+          if (clubOwner.functions && tokenIndex === 0) {
+            expect(await clubOwner.points(user.address)).to.eq(1);
+          }
+
           clubOwnersSubscribers[cIndex].push(user.address);
 
           const subscription = {
-            id: uIndex + 1,
+            idx: uIndex + 1,
             amount: subAmount,
             amountDecimals: decimals,
             tokenIndex,
@@ -209,29 +222,35 @@ describe("SupportClub", function () {
           };
           clubSubscriptions.push(subscription);
 
-          const subscriptionTo = await supportClub.subscriptionTo(
-            clubOwner.address,
-            user.address
-          );
+          if (storeExtraData) {
+            const subscriptionTo = await supportClub.subscriptionTo(
+              clubOwner.address,
+              user.address
+            );
 
-          expect(struct(subscriptionTo)).to.deep.eq(subscription);
+            expect(struct(subscriptionTo)).to.deep.eq(subscription);
 
-          expect(await supportClub.subscriptionsCount(clubOwner.address)).to.eq(
-            clubSubscriptions.length
-          );
+            expect(
+              await supportClub.subscriptionsCount(clubOwner.address)
+            ).to.eq(clubSubscriptions.length);
+          }
         }
 
-        expect(
-          await clubQuery
-            .getSubscribers(clubOwner.address, 1, users.length, false)
-            .then(([subscribers, subs]) => [struct(subscribers), struct(subs)])
-        ).to.deep.eq([
-          clubOwnersSubscribers[cIndex].map((s) => ({
-            user: s,
-            availableForRenew: false,
-          })),
-          clubSubscriptions,
-        ]);
+        if (storeExtraData)
+          expect(
+            await clubQuery
+              .getSubscribers(clubOwner.address, 1, users.length, false)
+              .then(([subscribers, subs]) => [
+                struct(subscribers),
+                struct(subs),
+              ])
+          ).to.deep.eq([
+            clubOwnersSubscribers[cIndex].map((s) => ({
+              user: s,
+              availableForRenew: false,
+            })),
+            clubSubscriptions,
+          ]);
       }
 
       const clubOwnersAddresses = clubOwners.map((c) => c.address);
@@ -385,7 +404,98 @@ describe("SupportClub", function () {
       }
     }
 
-    it(`Should create & renew subscriptions for free`, () =>
+    it(`Should create & renew subscriptions for free with ExtraData`, () =>
       createAndCheckSubscriptions());
+    it(`Should create & renew subscriptions for free`, () =>
+      createAndCheckSubscriptions(false));
+
+    async function subscribeAndBurn() {
+      const { supportClub, users, clubOwners } = await deployFixture(true);
+
+      const userSubscriptions = {};
+      const clubSubscriptions = {};
+
+      const tokenIndex = 0;
+      for (let uIndex = 0; uIndex < users.length; uIndex++) {
+        const user = users[uIndex];
+
+        userSubscriptions[user.address] = [];
+
+        for (let cIndex = 0; cIndex < clubOwners.length; cIndex++) {
+          const clubOwner = clubOwners[cIndex];
+
+          if (!clubSubscriptions[clubOwner.address])
+            clubSubscriptions[clubOwner.address] = [];
+
+          const subIdx = await supportClub
+            .clubs(clubOwner.address)
+            .then((r) =>
+              +r.nextSubscriptionIdx === 0 ? 1 : +r.nextSubscriptionIdx
+            );
+          await supportClub
+            .connect(user)
+            .subscribe(clubOwner.address, tokenIndex, 10, 18, parseEther(`10`));
+
+          userSubscriptions[user.address].push({
+            clubOwner: clubOwner.address,
+            idx: subIdx,
+          });
+          clubSubscriptions[clubOwner.address].push({
+            user: user.address,
+            idx: subIdx,
+          });
+        }
+      }
+
+      for (let uIndex = 0; uIndex < users.length; uIndex++) {
+        const deleteSubIndex = clubOwners.length - 1;
+
+        const user = users[uIndex];
+
+        const clubId = await supportClub.userSubscriptions(
+          user.address,
+          deleteSubIndex
+        );
+        const clubOwnerAddress = await supportClub.clubOwners(clubId);
+
+        {
+          const subscribtion = await supportClub.subscriptionTo(
+            clubOwnerAddress,
+            user.address
+          );
+
+          expect(struct(subscribtion)).to.deep.eq({
+            idx: subscribtion.idx,
+            amount: 10,
+            amountDecimals: 18,
+            tokenIndex: 0,
+            lastRenewRound: 0,
+            subscriptionRound: 1,
+          });
+        }
+
+        await supportClub
+          .connect(user)
+          .burnSubscription(user.address, clubOwnerAddress, deleteSubIndex);
+
+        {
+          const subscribtion = await supportClub.subscriptionTo(
+            clubOwnerAddress,
+            user.address
+          );
+
+          expect(struct(subscribtion)).to.deep.eq({
+            idx: 0,
+            amount: 0,
+            amountDecimals: 0,
+            tokenIndex: 0,
+            lastRenewRound: 0,
+            subscriptionRound: 0,
+          });
+        }
+      }
+    }
+
+    it(`Should subscribeAndBurn`, subscribeAndBurn);
   });
 });

@@ -5,7 +5,7 @@ contract NextDate {
     uint256 constant DENOMINATOR = 10_000;
 
     /**
-     * parse timestamp & get service params for calculations
+     * @dev parse timestamp & get service params for calculations
      */
     function getDaysFromTimestamp(
         uint256 timestamp
@@ -30,7 +30,7 @@ contract NextDate {
     }
 
     /**
-     * get timestamp of 1 day in next month
+     * @dev get timestamp for the first day of the next month
      */
     function getStartOfNextMonth(
         uint256 timestamp
