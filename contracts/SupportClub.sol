@@ -17,8 +17,10 @@ contract SupportClub is Ownable, NextDate {
     using SafeERC20 for IERC20;
 
     /**
-     * @dev `amount` & `amountDecimals` are used to reduce Subscription struct storage size,
-     * total subscription amount = `amount * (10**amountDecimals)`
+     * @dev
+     * `amount` & `amountDecimals` are used to reduce Subscription struct storage size,
+     * total subscription amount = `amount * (10**amountDecimals)`;
+     * `idx` – index in {subscriberOf} list
      */
     struct Subscription {
         uint128 idx;
@@ -39,9 +41,9 @@ contract SupportClub is Ownable, NextDate {
     }
 
     /**
-    * @dev
-     `refundForbidden` – a clubOwner can disable the renewal of club subscriptions with {renewClubsSubscriptionsWRefund} method
-     `isSupportReciever` – whether the clubOwner is a SupportReciever-compatible contract
+     * @dev
+     * `refundForbidden` – a clubOwner can disable the renewal of club subscriptions with {renewClubsSubscriptionsWRefund} method
+     * `isSupportReciever` – whether the clubOwner is a SupportReciever-compatible contract
      */
     struct ClubData {
         uint128 nextSubscriptionIdx;
@@ -114,6 +116,14 @@ contract SupportClub is Ownable, NextDate {
         return nextId - 1;
     }
 
+    /**
+     * @dev Create subscription method
+     * @param clubOwner – Club owner
+     * @param tokenIndex – index of ERC20 token in {paymentTokens} array
+     * @param amount – see Subscription for more info
+     * @param amountDecimals – see Subscription for more info
+     * @param currentAmount – current donation size, any amount between {paymentToken.minAmount} & {totalAmount}
+     */
     function subscribe(
         address clubOwner,
         uint16 tokenIndex,
