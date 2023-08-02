@@ -77,8 +77,17 @@ describe("SupportClub", function () {
     const supportReciever = await SupportReciever.deploy(
       erc20Tokens[0].address
     );
-
     clubOwners.unshift(supportReciever);
+
+    const SupportRecieverHacker = await ethers.getContractFactory(
+      `SupportRecieverHacker`
+    );
+    const supportRecieverHacker = await SupportRecieverHacker.deploy(
+      supportClub.address,
+      erc20Tokens[0].address
+    );
+
+    const clubOwnersWithHacker = [...clubOwners, supportRecieverHacker];
 
     await supportClub.addPaymentTokens(paymentTokens).then((tx) => tx.wait());
 
@@ -89,9 +98,11 @@ describe("SupportClub", function () {
       users,
       paymentTokens,
       erc20Tokens,
-      parsedDate: jsParseDate(await currentDate(), 1),
+      parsedDate: jsParseDate(await currentDate()),
       owner,
       supportReciever,
+      supportRecieverHacker,
+      clubOwnersWithHacker,
     };
   }
 
@@ -255,13 +266,14 @@ describe("SupportClub", function () {
 
       const clubOwnersAddresses = clubOwners.map((c) => c.address);
 
-      for (let index = 0; index < 2; index++) {
-        const { nextDateTimestamp } = jsParseDate(await currentDate(), 1);
+      const renewClubsSubscriptionsCycles = 2;
+
+      for (let index = 0; index < renewClubsSubscriptionsCycles; index++) {
+        const { nextDateTimestamp } = jsParseDate(await currentDate());
         await time.increaseTo(+nextDateTimestamp + 1);
 
         const { nextDateTimestamp: newNextDateTimestamp } = jsParseDate(
-          await currentDate(),
-          1
+          await currentDate()
         );
 
         const prevRenewRound = await supportClub.renewRound();
@@ -294,22 +306,25 @@ describe("SupportClub", function () {
           startsAt: newNextDateTimestamp,
           id: prevRenewRound.id + 1,
         });
-      }
+      } /**/
 
       for (let index = 0; index < 2; index++) {
-        const { nextDateTimestamp } = jsParseDate(await currentDate(), 1);
+        const { nextDateTimestamp } = jsParseDate(await currentDate());
         await time.increaseTo(+nextDateTimestamp + 1);
 
         const { nextDateTimestamp: newNextDateTimestamp } = jsParseDate(
-          await currentDate(),
-          1
+          await currentDate()
         );
 
         const prevRenewRound = await supportClub.renewRound();
 
-        for (let index = 0; index < erc20Tokens.length; index++) {
-          const erc20Token = erc20Tokens[index];
-          const [, minAmount, decimals] = paymentTokens[index];
+        for (
+          let tokenIndex = 0;
+          tokenIndex < erc20Tokens.length;
+          tokenIndex++
+        ) {
+          const erc20Token = erc20Tokens[tokenIndex];
+          const [, minAmount, decimals] = paymentTokens[tokenIndex];
 
           const fee = 1500;
           const refundFeePerSub = parseUnits(
@@ -327,7 +342,7 @@ describe("SupportClub", function () {
             supportClub.renewClubsSubscriptionsWRefund(
               clubOwnersAddresses,
               clubTokenSubscribers,
-              index,
+              tokenIndex,
               refundFeePerSub.add(1),
               owner.address
             )
@@ -336,7 +351,7 @@ describe("SupportClub", function () {
           const renewTx = supportClub.renewClubsSubscriptionsWRefund(
             clubOwnersAddresses,
             clubTokenSubscribers,
-            index,
+            tokenIndex,
             refundFeePerSub,
             owner.address
           );
@@ -353,6 +368,28 @@ describe("SupportClub", function () {
               totalRefundFee,
             ]
           );
+
+          // SupportReciever
+          if (tokenIndex === 0) {
+            const supportReciever = clubOwners[0];
+            const supportRecieverSubscribers = clubTokenSubscribers[0];
+
+            for (const supportRecieverSubscriber of supportRecieverSubscribers) {
+              expect(
+                await supportReciever.points(supportRecieverSubscriber)
+              ).to.eq(index + 1 + 1 + renewClubsSubscriptionsCycles);
+            }
+          }
+
+          await expect(
+            supportClub.renewClubsSubscriptionsWRefund(
+              clubOwnersAddresses,
+              clubTokenSubscribers,
+              tokenIndex,
+              refundFeePerSub,
+              owner.address
+            )
+          ).to.revertedWithCustomError(supportClub, `SubscriptionNotExpired`);
         }
 
         expect(struct(await supportClub.renewRound())).to.deep.eq({
@@ -360,6 +397,8 @@ describe("SupportClub", function () {
           id: prevRenewRound.id + 1,
         });
       }
+
+      const supportReciever = clubOwners[0];
 
       for (let uIndex = 0; uIndex < users.length; uIndex++) {
         const user = users[uIndex];
@@ -393,6 +432,10 @@ describe("SupportClub", function () {
             .burnSubscription(user.address, userClubOwner, subIndex);
           await tx.wait();
 
+          if (userClubOwner === supportReciever.address) {
+            expect(await supportReciever.points(user.address)).to.eq(0);
+          }
+
           const lastIndex = userClubOwners.length - 1;
           userClubOwners[subIndex] = userClubOwners[lastIndex];
           userClubOwners.pop();
@@ -401,6 +444,10 @@ describe("SupportClub", function () {
             await supportClub.userSubscriptionsCount(user.address);
           expect(newSubscriptionsCount).to.eq(userClubOwners.length);
         }
+        const newSubscriptionsCount = await supportClub.userSubscriptionsCount(
+          user.address
+        );
+        expect(newSubscriptionsCount).to.eq(0);
       }
     }
 

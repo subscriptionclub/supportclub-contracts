@@ -183,7 +183,7 @@ async function main() {
   const renewKey = `renew${clubOwnersAddresses.length}Clubs${allSubs}Subs`;
   gasAnalytics[renewKey] = [];
   for (let index = 0; index < 5; index++) {
-    const { nextDateTimestamp } = jsParseDate(await currentDate(), 1);
+    const { nextDateTimestamp } = jsParseDate(await currentDate());
     await time.increaseTo(+nextDateTimestamp + 1);
 
     await supportClub
@@ -229,4 +229,14 @@ main().catch(console.log);
 /**
  * 100 subs, 10 clubs, gas per sub:
  * 10 tokens = 20018
+ */
+
+/**
+ * compiler optimization, renew2Clubs10Subs:
+ * 200: 296418 total, 29642 avg
+ * 20_000: 293531 total, 29353 avg; -0.0097%
+ *
+ * compiler optimization, renew2Clubs100Subs:
+ * 200: 2586928 total, 25869 avg
+ * 20_000: 2559339 total, 25593 avg; -0.0106%
  */
